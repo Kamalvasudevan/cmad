@@ -1,44 +1,74 @@
-pipeline {
-   agent any
-
-   tools {
-       maven 'Maven 3.6.1'
-   }
-   
-   stages {
-      stage('build') {
-	 when {
-	    changeset 'java/cmad-ms-users/**'
-	    branch 'master'
-	 }
-         steps {
-            echo 'compiling users service'
-            sh 'mvn -f java/cmad-ms-users/pom.xml compile'
-         }
+ stage('docker-package'){ 
+    agent any
+    steps{
+      echo 'Packaging users app with docker'
+      script{
+	docker.withRegistry('https://index.docker.io/v1/', 'dockerlogin') { 
+	   def usersImage = docker.build("kamalvasudevan/cmad_users:v${env.BUILD_ID}", "java/cmad-ms-users")
+	   usersImage.push()
+	   usersImage.push("latest")
+        } 
       }
-      stage('test') {
-	 when {
-	    changeset 'java/cmad-ms-users/**'
-	    branch 'master'
-	 }
-         steps {
-            echo 'running unit tests on users service'
-	    dir('java/cmad-ms-users') {
-	       sh 'mvn clean test'
+    }
+    pipeline{
+      agent none
+      stages{
+          stage('build'){
+              agent{
+                docker{
+		    image 'maven:3.6.1-jdk-8-slim'
+		    args '-v $HOME/.m2:/root/.m2' }
+		}
+              	steps{
+                  echo 'building users app'
+ 		  dir('java/cmad-ms-users'){ 
+			sh 'mvn compile'
+		  } 
+		}
+          }
+          stage('test'){
+            agent{
+              docker{
+		  image 'maven:3.6.1-jdk-8-slim'
+		  args '-v $HOME/.m2:/root/.m2' }
+	      } 
+	      steps{
+		echo 'running unit tests on users app' dir('java/cmad-ms-users'){
+                  sh 'mvn clean test'
+                }
+	     } 
+	  }
+          stage('package'){
+            agent{
+	      docker{
+		image 'maven:3.6.1-jdk-8-slim' 
+		args '-v $HOME/.m2:/root/.m2'
+	      } 
             }
-         }
+	    steps{
+		echo 'packaging users app into a jarfile' dir('java/cmad-ms-users'){
+		    sh 'mvn package -DskipTests'
+		    archiveArtifacts artifacts: 'java/cmad-ms-users/target/ *.jar', fingerprint: true
+		} 
+	   }
+	 } 
+	 stage('docker-package'){
+	    agent any
+	    steps{
+	      echo 'Packaging users app with docker'
+	      script{
+		docker.withRegistry('https://index.docker.io/v1/', 'dockerlogin') {
+		   def usersImage = docker.build("kamalvasudevan/cmad_users:v${env.BUILD_ID}", "java/cmad-ms-users")
+		   usersImage.push()
+		   usersImage.push("latest")
+		}
+	     }
+          }
+        }
       }
-      stage('package') {
-	 when {
-	    changeset 'java/cmad-ms-users/**'
-	    branch 'master'
-	 }
-         steps {
-            echo 'packaging users app'
-            dir('java/cmad-ms-users') {
-               sh 'mvn package -DskipTests'
-	    }
+      post{
+         always{
+             echo 'the job is complete'
          }
-      }
-   }
-}
+      } 
+  }	
